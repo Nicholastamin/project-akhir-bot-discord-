@@ -1,0 +1,36 @@
+-- database: ./fakta.db
+
+-- Use the ▷ button in the top right corner to run the entire file.
+
+SELECT * FROM fakta;
+INSERT INTO fakta (fakta, rating) VALUES
+('Piramida Giza dibangun tanpa mesin modern',10),
+('Menara Pisa miring sejak awal pembangunan',10),
+('Ada pulau penuh kelinci di Jepang',10),
+('Indonesia punya lebih dari 17000 pulau',10),
+('Tubuh manusia mengandung emas',10),
+('Otak lebih aktif saat tidur daripada menonton TV',10),
+('Venus lebih panas dari Merkurius',10),
+('Gunung tertinggi di tata surya ada di Mars',10),
+('Gurita punya tiga jantung',10),
+('Hiu lebih tua dari dinosaurus',10),
+('Bumi tidak bulat sempurna',10),
+('Dulu satu hari hanya 22 jam',10),
+('Internet awalnya proyek militer',10),
+('Smartphone lebih kuat dari komputer NASA tahun 1969',10),
+('Tembok Besar China tidak terlihat dari luar angkasa dengan mata telanjang',10),
+('Kanada punya lebih banyak danau daripada semua negara lain',10),
+('Australia lebih lebar dari bulan',10),
+('Lebah bisa mengenali wajah manusia',10),
+('Kucing bisa membuat lebih dari 100 suara',10),
+('DNA manusia mirip pisang 60%',10),
+('Tulang manusia lebih kuat dari baja (rasio berat)',10),
+('Ada bintang 1000 kali lebih besar dari matahari',10),
+('Lubang hitam bisa melengkungkan waktu',10),
+('Romawi kuno punya beton lebih kuat dari beton modern',10),
+('Finlandia sering disebut negara paling bahagia',10),
+('Bhutan mengukur kebahagiaan nasional, bukan GDP',10),
+('AI bisa mengalahkan manusia di catur dan Go',10),
+('Robot bisa melakukan operasi bedah presisi',10),
+('Lebih dari 80% laut belum dieksplorasi',10),
+('Gunung Everest tumbuh beberapa mm tiap tahun',10);
