@@ -3,12 +3,21 @@ from discord.ext import commands
 import sqlite3
 import random
 import config
+import difflib
+
 # ====== SETUP BOT ======
 TOKEN = "ISI_TOKEN_DISCORD_KAMU"
 intents = discord.Intents.default()
 intents.message_content = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
+def hanya_dm():
+    async def predicate(ctx):
+        if isinstance(ctx.channel, discord.DMChannel):
+            return True
+        # await ctx.send("❌ Command ini hanya bisa digunakan lewat DM bot.")
+        return False
+    return commands.check(predicate)
 
 # ====== DATABASE SETUP ======
 conn = sqlite3.connect("fakta.db")
@@ -31,13 +40,64 @@ CREATE TABLE IF NOT EXISTS feedback (
 )
 """)
 conn.commit()
+# ====== TABLE REPORT ======
+c.execute("""
+CREATE TABLE IF NOT EXISTS reports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    fakta_id INTEGER,
+    user TEXT,
+    alasan TEXT
+)
+""")
+conn.commit()
+# ====== TABLE UPDATE ======
+c.execute("""
+CREATE TABLE IF NOT EXISTS updates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    isi TEXT,
+    tanggal TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)
+""")
+conn.commit()
 
 # ====== COMMAND TAMBAH FAKTA ======
 @bot.command()
 async def tambahfakta(ctx, *, fakta_text: str):
+
+    c.execute("SELECT fakta FROM fakta")
+    semua_fakta = [row[0] for row in c.fetchall()]
+
+    for f in semua_fakta:
+        similarity = difflib.SequenceMatcher(None, f.lower(), fakta_text.lower()).ratio()
+        if similarity > 0.85:
+            await ctx.send("⚠️ Fakta ini sangat mirip dengan fakta yang sudah ada!")
+            return
+
     c.execute("INSERT INTO fakta (fakta, rating) VALUES (?, 10)", (fakta_text,))
     conn.commit()
-    await ctx.send(f"✅ Fakta ditambahkan dengan rating awal 10!")
+
+    await ctx.send("✅ Fakta baru berhasil ditambahkan!")
+@bot.command()
+async def report(ctx, fakta_id: int, *, alasan: str):
+
+    # cek apakah fakta ada
+    c.execute("SELECT id FROM fakta WHERE id=?", (fakta_id,))
+    data = c.fetchone()
+
+    if not data:
+        await ctx.send("❌ Fakta tidak ditemukan")
+        return
+
+    user = str(ctx.author)
+
+    c.execute(
+        "INSERT INTO reports (fakta_id, user, alasan) VALUES (?, ?, ?)",
+        (fakta_id, user, alasan)
+    )
+    conn.commit()
+
+    await ctx.send("🚩 Laporan berhasil dikirim. Terima kasih!")
+
 # ====== INFO BOT ======
 @bot.command()
 async def info(ctx):
@@ -153,10 +213,56 @@ async def feedback(ctx, *, pesan: str):
     c.execute("INSERT INTO feedback (user, pesan) VALUES (?, ?)", (user, pesan))
     conn.commit()
     await ctx.send("✅ Terima kasih! Feedback kamu sudah disimpan.")
+@bot.command()
+async def listupdate(ctx):
 
-# ====== LIHAT FEEDBACK (ADMIN ONLY) ======
+    c.execute("SELECT id, isi, tanggal FROM updates ORDER BY id DESC LIMIT 10")
+    data = c.fetchall()
+
+    if not data:
+        await ctx.send("📭 Belum ada update.")
+        return
+
+    text = "📢 **Update Terbaru Bot:**\n"
+
+    for d in data:
+        text += f"\n🔹 {d[1]} ({d[2]})"
+
+    await ctx.send(text)
+@bot.command()
+@hanya_dm()
+async def tambahupdate(ctx):
+
+    await ctx.send("📩 Cek DM untuk menambahkan update.")
+
+    try:
+        await ctx.author.send("🔐 Masukkan password admin:")
+
+        def check(m):
+            return m.author == ctx.author and isinstance(m.channel, discord.DMChannel)
+
+        msg = await bot.wait_for("message", check=check, timeout=60)
+
+        if msg.content != FEEDBACK_PASS:
+            await ctx.author.send("❌ Password salah.")
+            return
+
+        await ctx.author.send("✏️ Kirim isi update:")
+
+        update_msg = await bot.wait_for("message", check=check, timeout=120)
+
+        c.execute("INSERT INTO updates (isi) VALUES (?)", (update_msg.content,))
+        conn.commit()
+
+        await ctx.author.send("✅ Update berhasil ditambahkan!")
+
+    except discord.Forbidden:
+        await ctx.send("❌ Tidak bisa kirim DM.")
+
+# ====== LIHAT FEEDBACK 
 
 @bot.command()
+@hanya_dm()
 async def listfeedback(ctx):
     await ctx.send("📩 Cek DM kamu untuk memasukkan password!")
 
@@ -190,6 +296,106 @@ async def listfeedback(ctx):
 
     except Exception as e:
         await ctx.send("❌ Saya tidak bisa DM kamu. Aktifkan DM dari server ini.")
+
+@bot.command()
+@hanya_dm()
+
+async def listreport(ctx):
+    await ctx.send("📩 Cek DM untuk password!")
+
+    try:
+        await ctx.author.send("🔐 Masukkan password admin:")
+
+        def check(m):
+            return m.author == ctx.author and isinstance(m.channel, discord.DMChannel)
+
+        msg = await bot.wait_for("message", check=check, timeout=60)
+
+        if msg.content != FEEDBACK_PASS:
+            await ctx.author.send("❌ Password salah")
+            return
+
+        c.execute("SELECT id, fakta_id, user, alasan FROM reports")
+        data = c.fetchall()
+
+        if not data:
+            await ctx.author.send("📭 Tidak ada report")
+            return
+
+        text = "🚩 **Daftar Report Fakta:**\n"
+        for d in data:
+            text += f"ID {d[0]} | Fakta {d[1]} | {d[2]} → {d[3]}\n"
+
+        await ctx.author.send(text)
+
+    except:
+        await ctx.send("❌ Tidak bisa kirim DM")
+@bot.command()
+@hanya_dm()
+async def hapusupdate(ctx):
+    await ctx.send("📩 Cek DM untuk menghapus update.")
+
+    try:
+        await ctx.author.send("🔐 Masukkan password admin:")
+
+        def check(m):
+            return m.author == ctx.author and isinstance(m.channel, discord.DMChannel)
+
+        msg = await bot.wait_for("message", check=check, timeout=60)
+
+        if msg.content != FEEDBACK_PASS:
+            await ctx.author.send("❌ Password salah")
+            return
+
+        await ctx.author.send("🗑️ Masukkan ID update yang ingin dihapus:")
+
+        id_msg = await bot.wait_for("message", check=check, timeout=60)
+
+        update_id = int(id_msg.content)
+
+        c.execute("DELETE FROM updates WHERE id=?", (update_id,))
+        conn.commit()
+
+        await ctx.author.send("✅ Update berhasil dihapus")
+
+    except:
+        await ctx.send("❌ Gagal menghapus update (cek DM atau ID).")
+@bot.command()
+@hanya_dm()
+async def hapusreport(ctx):
+    await ctx.send("📩 Cek DM untuk menghapus report.")
+
+    try:
+        await ctx.author.send("🔐 Masukkan password admin:")
+
+        def check(m):
+            return m.author == ctx.author and isinstance(m.channel, discord.DMChannel)
+
+        msg = await bot.wait_for("message", check=check, timeout=60)
+
+        if msg.content != FEEDBACK_PASS:
+            await ctx.author.send("❌ Password salah")
+            return
+
+        await ctx.author.send("🚩 Masukkan ID report yang ingin dihapus:")
+
+        id_msg = await bot.wait_for("message", check=check, timeout=60)
+
+        report_id = int(id_msg.content)
+
+        c.execute("DELETE FROM reports WHERE id=?", (report_id,))
+        conn.commit()
+
+        await ctx.author.send("✅ Report berhasil dihapus")
+
+    except:
+        await ctx.send("❌ Gagal menghapus report.")
+@bot.event
+async def on_command_error(ctx, error):
+    if isinstance(error, commands.CheckFailure):
+        await ctx.send("❌ Command ini hanya bisa digunakan lewat DM bot.")
+    else:
+        raise error
 
 # ====== START BOT ======
 bot.run(config.TOKEN)
