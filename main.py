@@ -5,11 +5,51 @@ import random
 import config
 import difflib
 import asyncio
+
+import wikipedia
+wikipedia.set_lang("id")
 # ====== SETUP BOT ======
 
 intents = discord.Intents.default()
 intents.message_content = True
 search_sessions = {}
+
+
+import re
+
+
+wikipedia.set_lang("id")
+
+def ambil_keyword(text):
+    words = re.findall(r'\w+', text.lower())
+    stopwords = {"yang","dan","di","ke","dari","adalah","itu","ini","untuk","pada"}
+    keywords = [w for w in words if w not in stopwords]
+    return " ".join(keywords[:4])  # ambil 4 kata penting
+
+def smart_search(query):
+    keyword = ambil_keyword(query)
+
+    # coba wikipedia
+    try:
+        hasil = wikipedia.summary(keyword, sentences=2)
+        return "📚 Wikipedia:\n" + hasil
+    except:
+        pass
+
+    # fallback duckduckgo
+    try:
+        with DDGS() as ddgs:
+            results = list(ddgs.text(
+                keyword + " penjelasan bahasa indonesia",
+                region="id-id",
+                max_results=3
+            ))
+            if results:
+                return "🌐 Web:\n" + results[0]["body"]
+    except:
+        pass
+
+    return "⚠️ Tidak menemukan penjelasan yang cukup relevan."
 async def kirim_panjang(ctx, text):
     for i in range(0, len(text), 1900):
         await ctx.send(text[i:i+1900])
@@ -65,7 +105,13 @@ try:
     conn.commit()
 except:
     pass
-
+# ====== Tambah kolom report_count di fakta ======
+try:
+    c.execute("ALTER TABLE fakta ADD COLUMN report_count INTEGER DEFAULT 0")
+    conn.commit()
+except sqlite3.OperationalError:
+    # Kolom sudah ada, lewati
+    pass
 c.execute("""
 CREATE TABLE IF NOT EXISTS fakta (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -92,6 +138,24 @@ CREATE TABLE IF NOT EXISTS reports (
     alasan TEXT
 )
 """)
+# ====== TABLE REPORT FAKTA ======
+c.execute("""
+CREATE TABLE IF NOT EXISTS report_fakta (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    fakta_id INTEGER,
+    user TEXT,
+    alasan TEXT
+)
+""")
+conn.commit()
+conn.commit()
+c.execute("""
+CREATE TABLE IF NOT EXISTS next_updates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    isi TEXT,
+    tanggal TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)
+""")
 conn.commit()
 # ====== TABLE UPDATE ======
 c.execute("""
@@ -103,6 +167,115 @@ CREATE TABLE IF NOT EXISTS updates (
 """)
 conn.commit()
 
+
+
+
+
+
+
+@bot.command()
+async def nextupdate(ctx):
+
+    c.execute("SELECT id, isi, tanggal FROM next_updates ORDER BY id DESC LIMIT 10")
+    data = c.fetchall()
+
+    if not data:
+        await ctx.send("📭 Belum ada rencana update.")
+        return
+
+    text = "🚀 **Update yang Akan Datang:**\n"
+
+    for d in data:
+        text += f"\n🔹 {d[1]} ({d[2]})"
+
+    await ctx.send(text)
+@bot.command()
+@hanya_dm()
+@admin_only()
+async def tambahnextupdate(ctx):
+
+    await ctx.send("✏️ Kirim isi next update:")
+
+    def check(m):
+        return m.author == ctx.author and isinstance(m.channel, discord.DMChannel)
+
+    try:
+        msg = await bot.wait_for("message", check=check, timeout=120)
+
+        c.execute("INSERT INTO next_updates (isi) VALUES (?)", (msg.content,))
+        conn.commit()
+
+        await ctx.send("✅ Next update berhasil ditambahkan!")
+
+    except asyncio.TimeoutError:
+        await ctx.send("⌛ Waktu habis.")
+@bot.command()
+@hanya_dm()
+@admin_only()
+async def hapusnextupdate(ctx):
+
+    await ctx.send("🗑️ Masukkan ID next update:")
+
+    def check(m):
+        return m.author == ctx.author and isinstance(m.channel, discord.DMChannel)
+
+    try:
+        msg = await bot.wait_for("message", check=check, timeout=60)
+
+        update_id = int(msg.content)
+
+        c.execute("DELETE FROM next_updates WHERE id=?", (update_id,))
+        conn.commit()
+
+        await ctx.send("✅ Next update berhasil dihapus.")
+
+    except:
+        await ctx.send("❌ ID tidak valid atau waktu habis.")
+import wikipedia
+from ddgs import DDGS
+
+wikipedia.set_lang("id")
+
+@bot.command()
+async def jelaskan(ctx, fakta_id: int):
+    c.execute("SELECT fakta FROM fakta WHERE id=?", (fakta_id,))
+    data = c.fetchone()
+
+    if not data:
+        await ctx.send("❌ Fakta tidak ditemukan.")
+        return
+
+    query = data[0]
+
+    await ctx.send("🔎 Mencari penjelasan...")
+
+    penjelasan = smart_search(query)
+
+    await kirim_panjang(ctx, f"📚 Penjelasan:\n\n{penjelasan}")
+    await ctx.send("🚧 Maaf jika penjelasan tidak cukup membantu,karena masih dalam pengembangan.")
+@bot.command()
+async def reportfakta(ctx, fakta_id: int, *, alasan: str):
+    # cek apakah fakta ada
+    c.execute("SELECT id FROM fakta WHERE id=?", (fakta_id,))
+    if not c.fetchone():
+        await ctx.send("❌ Fakta tidak ditemukan.")
+        return
+
+    user = str(ctx.author)
+
+    # simpan report fakta
+    c.execute("INSERT INTO report_fakta (fakta_id, user, alasan) VALUES (?, ?, ?)",
+              (fakta_id, user, alasan))
+
+    # update jumlah report di tabel fakta
+    c.execute("UPDATE fakta SET report_count = report_count + 1 WHERE id=?", (fakta_id,))
+    conn.commit()
+
+    # ambil jumlah report terbaru
+    c.execute("SELECT report_count FROM fakta WHERE id=?", (fakta_id,))
+    jumlah_report = c.fetchone()[0]
+
+    await ctx.send(f"🚩 Fakta ID {fakta_id} berhasil direport.\nJumlah orang yang report fakta ini: {jumlah_report}")
 # ====== COMMAND TAMBAH FAKTA ======
 @bot.command()
 async def tambahfakta(ctx, *, fakta_text: str):
@@ -145,37 +318,54 @@ async def report(ctx, fakta_id: int, *, alasan: str):
 @bot.command()
 async def info(ctx):
     await ctx.send("""
-🤖 **FaktaBot**
-Bot Discord untuk menyimpan dan mencari fakta unik 🌍  
-Prefix: `!`
+🤖 **FaktaBot — Knowledge Companion**
 
-Dibuat oleh: Nicholas  
-Fitur utama: Fakta random + rating + pencarian fakta
+Bot untuk menemukan, menyimpan, dan memahami fakta menarik 🌍  
+Sekarang dilengkapi pencarian penjelasan otomatis berbasis web + Wikipedia.
+
+✨ Fitur unggulan:
+• Fakta random berbobot rating
+• Penjelasan tambahan AI search
+• Trending fakta
+• Sistem report & moderasi
+• Roadmap update
+• Feedback user
+
+🛠 Dibuat oleh: Nicholas
+⚡ Versi: Advanced Build
+
+Gunakan !help untuk melihat semua perintah.
 """)
 # ====== HELP COMMAND ======
 bot.remove_command("help")
-
 @bot.command()
 async def help(ctx):
     await ctx.send("""
-📌 **FaktaBot**
+📚 **FaktaBot — Menu User**
 
 🧠 Fakta:
-• /fakta → Fakta random
-• /tambahfakta <teks> → Tambah fakta
-• /carifakta <kata> → Cari fakta
-• /lihatfakta <id> → Detail fakta
-• /rate <id> <1-10> → Rating fakta
+• !fakta → Fakta random
+• !lihatfakta <id> → Detail fakta
+• !carifakta <kata> → Cari fakta
+• !jelaskan <id> → Penjelasan tambahan
+• !trending → Fakta paling populer
 
-🚩 Lainnya:
-• /report <id> <alasan> → Laporkan fakta
-• /feedback <pesan> → Kirim saran
-• /listupdate → Lihat update bot
+⭐ Interaksi:
+• !rate <id> <1-10> → Rating fakta
+• !report <id> <alasan> → Laporkan fakta
+• !reportfakta <id> <alasan> → Report khusus kualitas fakta
+• !feedback <pesan> → Kirim saran
+
+📢 Update:
+• !listupdate → Update terbaru bot
+• !nextupdate → Rencana update
+
+ℹ️ Info:
+• !info → Info bot
 
 💡 Tips:
-Ketik `lagi` setelah cari fakta untuk lihat hasil berikutnya.
+Ketik "lagi" setelah pencarian untuk melihat hasil berikutnya.
 """)
-
 @bot.command()
 @hanya_dm()
 @admin_only()
@@ -183,22 +373,30 @@ async def adminhelp(ctx):
     await ctx.send("""
 🛠️ **FaktaBot — Admin Panel**
 
+📚 Fakta:
+• !listfakta → Lihat semua fakta
+• !hapusfakta → Hapus fakta
+
 📢 Update:
-• /tambahupdate → Tambah update
-• /hapusupdate → Hapus update
-• /listupdate → Lihat update
+• !tambahupdate → Tambah changelog
+• !hapusupdate → Hapus changelog
+• !listupdate → Lihat changelog
+
+🚀 Roadmap:
+• !tambahnextupdate → Tambah rencana update
+• !hapusnextupdate → Hapus rencana update
+• !nextupdate → Lihat roadmap
 
 📩 Moderasi:
-• /listfeedback → Lihat feedback
-• /listreport → Lihat laporan
-• /hapusreport → Hapus laporan
+• !listfeedback → Lihat feedback
+• !listreport → Lihat laporan
+• !hapusreport → Hapus laporan
 
 🔐 Admin:
-• /adminlogin → Login admin
-• /adminlogout → Logout admin
+• !adminlogin → Login admin
+• !adminlogout → Logout admin
 
-⚙️ Catatan:
-Semua command admin hanya di DM.
+⚠️ Semua command admin hanya lewat DM.
 """)
 
 # ====== COMMAND RATE FAKTA ======
@@ -256,11 +454,15 @@ async def fakta(ctx):
         f"{fakta_text}\n\n"
         f"👀 Dilihat: {views} kali"
     )
-
+    await ctx.send("💡 Ketik !jelaskan ID untuk penjelasan tambahan.")
     await ctx.send("⭐ Mau kasih rating? Ketik angka 1–10 atau ketik `skip`")
 
     def check(m):
-        return m.author == ctx.author and m.channel == ctx.channel
+        return (
+        m.author == ctx.author
+        and m.channel == ctx.channel
+        and (m.content.isdigit() or m.content.lower() == "skip")
+    )
 
     try:
         msg = await bot.wait_for("message", check=check, timeout=30)
@@ -329,11 +531,15 @@ async def lihatfakta(ctx, fakta_id: int):
         f"⭐ Rating: {data[2]:.2f}\n"
         f"👀 Dilihat: {views} kali"
     )
-
+    await ctx.send("💡 Ketik !jelaskan ID untuk penjelasan tambahan.")
     await ctx.send("⭐ Mau kasih rating? Ketik angka 1–10 atau ketik `skip`")
 
     def check(m):
-        return m.author == ctx.author and m.channel == ctx.channel
+        return (
+        m.author == ctx.author
+        and m.channel == ctx.channel
+        and (m.content.isdigit() or m.content.lower() == "skip")
+    )
 
     try:
         msg = await bot.wait_for("message", check=check, timeout=30)
